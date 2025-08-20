@@ -9,6 +9,10 @@ import json
 import qdarkstyle
 import html
 import os
+import ssl
+import urllib.request
+from PyQt5 import QtCore
+from PyQt5.QtWidgets import QToolTip
 from pathlib import Path
 from lxml import etree
 from datetime import datetime
@@ -23,7 +27,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QLineEdit, QLabel, QPushButton,
     QListWidget, QWidget, QFileDialog, QCheckBox, QSizePolicy, QHBoxLayout,
     QDialog, QFormLayout, QDialogButtonBox, QTabWidget, QListWidgetItem,
-    QSpinBox, QMenu, QAction, QTextEdit
+    QSpinBox, QMenu, QAction, QTextEdit, 
 )
 
 is_windows = sys.platform.startswith('win')
@@ -309,7 +313,7 @@ class AddCredentialsDialog(QtWidgets.QDialog):
 class IPTVPlayerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Xtream IPTV Player by MY-1 V3.9")
+        self.setWindowTitle("Xtream IPTV Player by MY-1 V4.0")
         self.resize(700, 550)
 
         self.groups = {}
@@ -507,8 +511,15 @@ class IPTVPlayerApp(QMainWindow):
         self.channel_list_live = QListWidget()
         self.channel_list_movies = QListWidget()
         self.channel_list_series = QListWidget()
-
+        
+        
         standard_icon_size = QSize(24, 24)
+
+        # 🟢 Install event filter for tooltip detection
+        for widget in [self.channel_list_live, self.channel_list_movies, self.channel_list_series]:
+            widget.viewport().installEventFilter(self)
+        
+        
         for list_widget in [self.channel_list_live, self.channel_list_movies, self.channel_list_series]:
             list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             list_widget.setIconSize(standard_icon_size)
@@ -518,7 +529,7 @@ class IPTVPlayerApp(QMainWindow):
                     padding-bottom: 5px;
                 }
             """)
-
+        
         self.live_layout.addWidget(self.channel_list_live)
         self.movies_layout.addWidget(self.channel_list_movies)
         self.series_layout.addWidget(self.channel_list_series)
@@ -528,7 +539,7 @@ class IPTVPlayerApp(QMainWindow):
             'Movies': self.channel_list_movies,
             'Series': self.channel_list_series,
         }
-
+        
         self.tab_widget.currentChanged.connect(self.on_tab_change)
         self.channel_list_live.itemDoubleClicked.connect(self.channel_item_double_clicked)
         self.channel_list_movies.itemDoubleClicked.connect(self.channel_item_double_clicked)
@@ -561,22 +572,56 @@ class IPTVPlayerApp(QMainWindow):
 
         self.load_theme_preference()
 
+    
 
     def toggle_dark_theme(self, state):
         """
         Toggle the application's dark theme based on the checkbox state.
+        Keeps your existing save_theme_preference calls and simply augments
+        the stylesheet with tooltip styles.
         """
+        app = QApplication.instance()
+
+        # Try both qdarkstyle loaders for compatibility
+        def _load_qdarkstyle():
+            try:
+                return qdarkstyle.load_stylesheet_pyqt5()
+            except Exception:
+                try:
+                    return qdarkstyle.load_stylesheet(qt_api='pyqt5')
+                except Exception:
+                    return ""
+
         if state == Qt.Checked:
-            QApplication.instance().setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+            base = _load_qdarkstyle()
+            app.setStyleSheet(base + """
+            /* Tooltip in dark */
+            QToolTip {
+                padding: 6px 8px;
+                border: 1px solid #1aa3b5;
+                background: #1b2332;
+                color: #e3f6ff;
+                font-size: 12px;
+            }
+            """)
             self.save_theme_preference(dark=True)
         else:
-            QApplication.instance().setStyleSheet("")
+            # Reset to light but keep a nicer tooltip style
+            app.setStyleSheet("""
+            QToolTip {
+                padding: 6px 8px;
+                border: 1px solid #888;
+                background: #ffffff;
+                color: #222;
+                font-size: 12px;
+            }
+            """)
             self.save_theme_preference(dark=False)
 
+            
+
     def load_theme_preference(self):
-        """
-        Load the saved theme preference from config.ini and apply it.
-        """
+        
         config = configparser.ConfigParser()
         config.read('config.ini')
         dark = False
@@ -935,71 +980,85 @@ class IPTVPlayerApp(QMainWindow):
             print(f"Error updating category lists: {e}")
             self.animate_progress(self.progress_bar.value(), 100, "Error updating lists")
 
+        # ─── inside class IPTVPlayerApp ─────────────────────────────────────────────
     def fetch_channels(self, category_name, tab_name):
+        """
+        Retrieve the LIVE / VOD / Series list for the chosen category and show
+        it.  No per-movie look-ups are performed here – we only get the list
+        itself, add a playback URL, and store it on the navigation stack.
+        """
         try:
-            category_id = next(g["category_id"] for g in self.groups[tab_name] if g["category_name"] == category_name)
+            # 1. category_id for the clicked name --------------------------------
+            category_id = next(
+                g["category_id"] for g in self.groups[tab_name]
+                if g["category_name"] == category_name
+            )
 
-            list_widget = self.get_list_widget(tab_name)
-            current_scroll_position = list_widget.verticalScrollBar().value()
-            stack = self.navigation_stacks[tab_name]
-            if stack:
-                stack[-1]['scroll_position'] = current_scroll_position
+            # remember scroll position before diving one level deeper -----------
+            lw          = self.get_list_widget(tab_name)
+            curr_scroll = lw.verticalScrollBar().value()
+            if self.navigation_stacks[tab_name]:
+                self.navigation_stacks[tab_name][-1]["scroll_position"] = curr_scroll
             else:
-                self.top_level_scroll_positions[tab_name] = current_scroll_position
+                self.top_level_scroll_positions[tab_name] = curr_scroll
 
-            http_method = self.get_http_method()
+            # 2. request the list ------------------------------------------------
             params = {
-                'username': self.username,
-                'password': self.password,
-                'action': '',
-                'category_id': category_id
+                "username":   self.username,
+                "password":   self.password,
+                "action":     "",
+                "category_id": category_id,
             }
-
             if tab_name == "LIVE":
-                params['action'] = 'get_live_streams'
-                stream_type = "live"
+                params["action"] = "get_live_streams"
+                stream_type      = "live"
             elif tab_name == "Movies":
-                params['action'] = 'get_vod_streams'
-                stream_type = "movie"
+                params["action"] = "get_vod_streams"
+                stream_type      = "movie"
+            else:  # Series tab
+                params["action"] = "get_series"
+                stream_type      = "series"
 
-            streams_url = f"{self.server}/player_api.php"
-            response = self.make_request(http_method, streams_url, params)
+            response = self.make_request(
+                self.get_http_method(),
+                f"{self.server}/player_api.php",
+                params, timeout=10
+            )
             response.raise_for_status()
-
             data = response.json()
             if not isinstance(data, list):
-                raise ValueError("Expected a list of channels")
+                raise ValueError("Expected a list of entries")
+
+            # 3. add playback URL and tidy epg_channel_id -----------------------
+            for entry in data:
+                sid = entry.get("stream_id")
+                if sid:
+                    if tab_name == "LIVE":
+                        ext = "ts"
+                    else:
+                        ext = entry.get("container_extension", "m3u8")
+                    entry["url"] = (f"{self.server}/{stream_type}/{self.username}/"
+                                    f"{self.password}/{sid}.{ext}")
+                epg_id = (entry.get("epg_channel_id") or "").strip().lower()
+                entry["epg_channel_id"] = epg_id if epg_id else None
+
+
+            # 4. push onto stack & display --------------------------------------
             self.entries_per_tab[tab_name] = data
+            self.navigation_stacks[tab_name].append({
+                "level": "channels",
+                "data":  {"tab_name": tab_name, "entries": data},
+                "scroll_position": 0
+            })
+            self.show_channels(lw, tab_name)
 
-            entries = self.entries_per_tab[tab_name]
-
-            for entry in entries:
-                stream_id = entry.get("stream_id")
-                epg_channel_id = entry.get("epg_channel_id")
-                if epg_channel_id:
-                    epg_channel_id = epg_channel_id.strip().lower()
-                else:
-                    epg_channel_id = None
-
-                container_extension = entry.get("container_extension", "m3u8")
-                if stream_id:
-                    entry["url"] = f"{self.server}/{stream_type}/{self.username}/{self.password}/{stream_id}.{container_extension}"
-                else:
-                    entry["url"] = None
-                entry["epg_channel_id"] = epg_channel_id
-
-            self.navigation_stacks[tab_name].append({'level': 'channels', 'data': {'tab_name': tab_name, 'entries': entries}, 'scroll_position': 0})
-            self.show_channels(list_widget, tab_name)
-
-        except requests.RequestException as e:
-            print(f"Network error: {e}")
-            self.animate_progress(self.progress_bar.value(), 100, "Network Error")
-        except ValueError as e:
-            print(f"Data validation error: {e}")
-            self.animate_progress(self.progress_bar.value(), 100, "Invalid channel data received")
         except Exception as e:
-            print(f"Error fetching channels: {e}")
-            self.animate_progress(self.progress_bar.value(), 100, "Error fetching channels")
+            print("Error fetching channels:", e)
+            self.animate_progress(self.progress_bar.value(), 100,
+                                  "Error fetching channels")
+    # ─────────────────────────────────────────────────────────────────────────────
+
+
 
     def handle_xtream_double_click(self, selected_item, selected_text, tab_name, sender):
         try:
@@ -1066,121 +1125,493 @@ class IPTVPlayerApp(QMainWindow):
         except Exception as e:
             print(f"Error loading channels: {e}")
 
+
+    def fetch_tmdb_description(self, tmdb_id, media_hint=None):
+        """
+        Scrape basic info (title / description / rating / year) from TMDb.
+        Tries the 'movie' page first; if it 404s, tries the 'tv' page.
+        The result – or an empty dict on failure – is cached in self.tmdb_cache.
+        """
+        import ssl
+        if not tmdb_id or not str(tmdb_id).isdigit():
+            return {}
+
+        # initialise cache once
+        if not hasattr(self, "tmdb_cache"):
+            self.tmdb_cache = {}
+
+        # return cached (including cached failures)
+        if tmdb_id in self.tmdb_cache:
+            return self.tmdb_cache[tmdb_id]
+
+        # decide order to probe
+        probe_order = []
+        if media_hint == "movie":
+            probe_order = ["movie"]
+        elif media_hint == "tv":
+            probe_order = ["tv"]
+        else:
+            probe_order = ["movie", "tv"]
+
+        headers  = {"User-Agent": "Mozilla/5.0"}
+        context  = ssl._create_unverified_context()
+        patterns = {
+            "desc":  re.compile(r'<div class="overview">\s*<p[^>]*>(.*?)</p>', re.DOTALL),
+            "desc2": re.compile(r'<meta name="description" content="(.*?)"'),
+            "title": re.compile(r'<title>(.*?)\s*\|\s*The Movie Database', re.DOTALL),
+            "rating":re.compile(r'<span class="user_score_chart"[^>]+data-percent="(\d+)"'),
+            "year":  re.compile(r'<span class="release">.*?(\d{4})</span>'),
+        }
+
+        for path in probe_order:
+            url = f"https://www.themoviedb.org/{path}/{tmdb_id}"
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=10, context=context) as resp:
+                    html_data = resp.read().decode("utf-8")
+
+                # --- scrape ---
+                desc_match  = patterns["desc"].search(html_data) or patterns["desc2"].search(html_data)
+                title_match = patterns["title"].search(html_data)
+                rate_match  = patterns["rating"].search(html_data)
+                year_match  = patterns["year"].search(html_data)
+
+                result = {
+                    "title":       title_match.group(1).strip()  if title_match else "",
+                    "description": desc_match.group(1).strip()   if desc_match else "",
+                    "rating":      f"{int(rate_match.group(1))/10:.1f}/10" if rate_match else "",
+                    "year":        year_match.group(1)           if year_match else "",
+                }
+                # store & return
+                self.tmdb_cache[tmdb_id] = result
+                return result
+
+            except urllib.error.HTTPError as http_err:
+                if http_err.code == 404:
+                    # try next path in order
+                    continue
+                else:
+                    print("TMDb fetch error:", http_err)
+                    break
+            except Exception as e:
+                print("TMDb fetch error:", e)
+                break
+
+        # cache the miss so we do not retry every hover
+        self.tmdb_cache[tmdb_id] = {}
+        return {}
+
+
+
+
+    def _current_epg_description(self, entry):
+        """
+        Return the description of the programme that is *on-air now* for the
+        supplied LIVE entry.  If none is airing, return the first upcoming
+        programme’s description.  If the channel is not in the EPG, return ''.
+        """
+        try:
+            if not self.epg_data:
+                return ""
+
+            # --- locate the EPG channel id -----------------------------------
+            epg_id = (entry.get("epg_channel_id") or "").strip().lower()
+            if not epg_id:
+                # fall back to fuzzy name-map
+                ch_name = normalize_channel_name(entry.get("name", ""))
+                epg_id  = self.epg_name_map.get(ch_name, "")
+
+            if not epg_id or epg_id not in self.epg_data:
+                return ""
+
+            now      = datetime.now(tz=tz.tzlocal())
+            epg_list = self.epg_data[epg_id]
+
+            # --- pick "current" (or very next) programme ---------------------
+            current = None
+            for p in epg_list:
+                start = parser.parse(p["start_time"])
+                stop  = parser.parse(p["stop_time"])
+                if start <= now <= stop:
+                    current = p
+                    break
+                if start > now and current is None:
+                    current = p   # first upcoming show, just in case
+
+            return (current or {}).get("description", "")
+
+        except Exception as err:
+            print("EPG helper error:", err)
+            return ""
+
+
+
+    def _lazy_load_movie_info(self, entry):
+        if entry.get("_info_fetched"):
+            return
+
+        vod_id = entry.get("stream_id")
+        if not vod_id:
+            entry["_info_fetched"] = True
+            return
+
+        try:
+            info = self.make_request(
+                self.get_http_method(),
+                f"{self.server}/player_api.php",
+                {
+                    "username": self.username,
+                    "password": self.password,
+                    "action":   "get_vod_info",
+                    "vod_id":   vod_id
+                },
+                timeout=10
+            ).json().get("info", {})
+
+            entry["info"] = info
+            entry["plot"]        = info.get("plot", "")
+            entry["stream_icon"] = info.get("movie_image", entry.get("stream_icon", ""))
+            entry["tmdb_id"]     = (info.get("tmdb_id") or info.get("imdb_id") or "")
+
+        except Exception as err:
+            print("Lazy VOD-info fetch failed:", err)
+
+        entry["_info_fetched"] = True
+
+
+
+    def _lazy_load_series_info(self, entry):
+        if entry.get("_info_fetched"):
+            return
+
+        series_id = entry.get("series_id")
+        episode_id = entry.get("id")
+
+        try:
+            # Fetch for series
+            if series_id:
+                info = self.make_request(
+                    self.get_http_method(),
+                    f"{self.server}/player_api.php",
+                    {
+                        "username": self.username,
+                        "password": self.password,
+                        "action":   "get_series_info",
+                        "series_id": series_id
+                    },
+                    timeout=10
+                ).json().get("info", {})
+                entry["info"] = info
+            # For episodes, info may be already present (most APIs send it inline)
+            elif episode_id:
+                if entry.get("info"):
+                    entry["_info_fetched"] = True
+                    return
+                entry["info"] = {}
+            else:
+                entry["info"] = {}
+
+        except Exception as err:
+            print("Lazy Series/Episode-info fetch failed:", err)
+
+        entry["_info_fetched"] = True
+
+
+
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.ToolTip:
+            for widget, tab in [
+                (self.channel_list_live,   "LIVE"),
+                (self.channel_list_movies, "Movies"),
+                (self.channel_list_series, "Series")
+            ]:
+                if obj is widget.viewport():
+                    idx = widget.indexAt(event.pos())
+                    if not idx.isValid():
+                        break
+
+                    entry = widget.item(idx.row()).data(Qt.UserRole)
+                    if not isinstance(entry, dict):
+                        return False
+
+                    # ==== MOVIE TOOLTIP ====
+                    if tab == "Movies":
+                        if not entry.get("_info_fetched"):
+                            self._lazy_load_movie_info(entry)
+                        info = entry.get("info", {})
+                        plot = info.get("plot", "") or entry.get("plot", "")
+                        genre = info.get("genre", "")
+                        rating = str(info.get("rating", ""))
+                        release_date = info.get("releasedate") or info.get("releaseDate", "")
+                        duration = info.get("duration", "")
+                        cast = info.get("cast", "")
+                        director = info.get("director", "")
+                        trailer = info.get("youtube_trailer", "")
+                        tmdb_id = info.get("tmdb_id", "") or entry.get("tmdb_id", "")
+
+                        if not plot and tmdb_id:
+                            plot = self.fetch_tmdb_description(tmdb_id).get("description", "")
+                        if not plot:
+                            plot = "No description available."
+
+                        details = []
+                        if genre: details.append(f"<b>Genre:</b> {html.escape(genre)}")
+                        if rating: details.append(f"<b>Rating:</b> {html.escape(rating)}")
+                        if release_date: details.append(f"<b>Release:</b> {html.escape(str(release_date))}")
+                        if duration: details.append(f"<b>Duration:</b> {html.escape(duration)}")
+                        if cast: details.append(f"<b>Cast:</b> {html.escape(cast)}")
+                        if director: details.append(f"<b>Director:</b> {html.escape(director)}")
+                        if trailer:
+                            details.append(f'Trailer: https://youtu.be/{html.escape(trailer)}')
+
+                        details_html = "<br>".join(details)
+                        desc_html = html.escape(plot).replace("\n", "<br>")
+
+                        icon_html = ""
+                        poster_url = info.get("movie_image") or entry.get("stream_icon") or entry.get("cover", "")
+                        local = self.get_cached_icon_path(poster_url)
+                        if local:
+                            icon_html = f'<img src="{local}" width="160"><br>'
+
+                        movie_title = info.get("name", entry.get("name", "Untitled"))
+                        tooltip = (
+                            f'<div style="padding:0;margin:0;font-size:13px;max-width:400px;'
+                            f'font-family:Arial;white-space:normal;word-wrap:break-word;">'
+                            f'{icon_html}<b>{html.escape(movie_title)}</b><br>'
+                            f'{details_html}<br><br>{desc_html}</div>'
+                        )
+
+                        QToolTip.showText(widget.mapToGlobal(event.pos()), tooltip)
+                        return True
+
+                    # ==== SERIES/EPISODE TOOLTIP ====
+                    if tab == "Series":
+                        if not entry.get("_info_fetched"):
+                            self._lazy_load_series_info(entry)
+                        info = entry.get("info", {})
+                        
+
+                        # Use both 'title' and 'name' in case one is missing
+                        item_title = entry.get("title") or info.get("name") or entry.get("name", "Untitled")
+                        plot = info.get("plot", "") or entry.get("plot", "")
+                        genre = info.get("genre", "")
+                        rating = str(info.get("rating", ""))
+                        # Handle both 'releasedate' and 'releaseDate'
+                        release_date = info.get("releasedate") or info.get("releaseDate", "")
+                        duration = info.get("duration", "")
+                        cast = info.get("cast", "")
+                        director = info.get("director", "")
+                        trailer = info.get("youtube_trailer", "")
+
+                        details = []
+                        if genre: details.append(f"<b>Genre:</b> {html.escape(genre)}")
+                        if rating: details.append(f"<b>Rating:</b> {html.escape(rating)}")
+                        if release_date: details.append(f"<b>Release:</b> {html.escape(str(release_date))}")
+                        if duration: details.append(f"<b>Duration:</b> {html.escape(duration)}")
+                        if cast: details.append(f"<b>Cast:</b> {html.escape(cast)}")
+                        if director: details.append(f"<b>Director:</b> {html.escape(director)}")
+                        if trailer:
+                            details.append(f'Trailer: https://youtu.be/{html.escape(trailer)}')
+
+                        details_html = "<br>".join(details)
+                        desc_html = html.escape(plot).replace("\n", "<br>")
+
+                        icon_html = ""
+                        poster_url = info.get("movie_image") or entry.get("stream_icon") or entry.get("cover", "")
+                        local = self.get_cached_icon_path(poster_url)
+                        if local:
+                            icon_html = f'<img src="{local}" width="160"><br>'
+
+                        tooltip = (
+                            f'<div style="padding:0;margin:0;font-size:13px;max-width:400px;'
+                            f'font-family:Arial;white-space:normal;word-wrap:break-word;">'
+                            f'{icon_html}<b>{html.escape(str(item_title))}</b><br>'
+                            f'{details_html}<br><br>{desc_html}</div>'
+                        )
+
+                        QToolTip.showText(widget.mapToGlobal(event.pos()), tooltip)
+                        return True
+
+                    # ==== LIVE TOOLTIP (EPG) ====
+                    if tab == "LIVE" and self.epg_data:
+                        desc = self._current_epg_description(entry) or "No current EPG information available."
+                        desc_html = html.escape(desc).replace("\n", "<br>")
+                        title_html = html.escape(entry.get("name", "Untitled"))
+                        tooltip = (
+                            f'<div style="padding:0;margin:0;font-size:13px;max-width:380px;'
+                            f'font-family:Arial;white-space:normal;word-wrap:break-word;">'
+                            f'<b>{title_html}</b><br>{desc_html}</div>'
+                        )
+                        if desc.strip():
+                            QToolTip.showText(widget.mapToGlobal(event.pos()), tooltip)
+                        return True
+
+        return super().eventFilter(obj, event)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def get_cached_icon_path(self, url):
+        try:
+            if not url:
+                return ""
+
+            os.makedirs(Path.home() / '.iptv' / 'icons', exist_ok=True)
+            ext = os.path.splitext(url)[-1] if '.' in url else '.jpg'
+            filename = re.sub(r'\W+', '_', url) + ext
+            local_path = Path.home() / '.iptv' / 'icons' / filename
+
+            if not local_path.exists():
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+
+                # 🔐 Disable SSL cert verification (safe for public image downloads)
+                ssl_ctx = ssl._create_unverified_context()
+                with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as response, open(local_path, 'wb') as out_file:
+                    out_file.write(response.read())
+
+            return str(local_path)
+
+        except Exception as e:
+            print(f"Failed to cache icon: {e}")
+            return ""
+
+
+
     def show_channels(self, list_widget, tab_name):
+        """
+        Populate the QListWidget for LIVE / Movies / Series.
+
+        • LIVE:   – no tooltip at all when EPG is not available
+                  – EPG description shown later by eventFilter once EPG is loaded
+                  – no poster icon (per your last request)
+        • Movies / Series: keep normal icons & placeholder tooltip
+        """
         try:
             list_widget.clear()
 
+            # ─── “Go Back” at sub-levels ─────────────────────────────────────────
             if self.navigation_stacks[tab_name]:
-                go_back_item = QListWidgetItem("Go Back")
-                go_back_item.setIcon(self.go_back_icon)
-                list_widget.addItem(go_back_item)
+                back_item = QListWidgetItem("Go Back")
+                back_item.setIcon(self.go_back_icon)
+                list_widget.addItem(back_item)
 
-            if tab_name == 'LIVE':
-                channel_icon = self.live_channel_icon
-            elif tab_name == 'Movies':
-                channel_icon = self.movies_channel_icon
-            elif tab_name == 'Series':
-                channel_icon = self.series_channel_icon
+            # choose an icon only for Movies / Series
+            if tab_name == "LIVE":
+                row_icon = QIcon()                # blank – we don’t want icons
+            elif tab_name == "Movies":
+                row_icon = self.movies_channel_icon
+            elif tab_name == "Series":
+                row_icon = self.series_channel_icon
             else:
-                channel_icon = self.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+                row_icon = self.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
             items = []
             now = datetime.now(tz=tz.tzlocal()) if self.epg_data else None
 
-            for idx, entry in enumerate(self.entries_per_tab[tab_name]):
-                display_text = entry.get("name", "Unnamed Channel")
-                tooltip_text = ""
+            for entry in self.entries_per_tab[tab_name]:
+                display_text = entry.get("name", "Unnamed")
+                tooltip_text = ""                 # defaults to nothing
 
+                # ─── LIVE: append on-air title to row text (if EPG ready) ───────
                 if tab_name == "LIVE" and self.epg_data:
-                    epg_channel_id = entry.get('epg_channel_id')
-                    if epg_channel_id and epg_channel_id in self.epg_data:
-                        epg_info_list = self.epg_data[epg_channel_id]
-                    else:
-                        channel_name = normalize_channel_name(entry.get('name', ''))
-                        epg_channel_id = self.epg_name_map.get(channel_name, None)
-                        epg_info_list = self.epg_data.get(epg_channel_id, [])
+                    epg_id = entry.get("epg_channel_id") or ""
+                    if not epg_id:
+                        ch_norm = normalize_channel_name(entry.get("name", ""))
+                        epg_id  = self.epg_name_map.get(ch_norm, "")
+                    epg_list = self.epg_data.get(epg_id, [])
 
-                    if epg_info_list:
-                        current_epg = None
-                        for epg in epg_info_list:
-                            start_time = parser.parse(epg['start_time'])
-                            stop_time = parser.parse(epg['stop_time'])
-                            if start_time <= now <= stop_time:
-                                current_epg = epg
-                                break
-                            elif start_time > now:
-                                current_epg = epg
-                                break
+                    for prog in epg_list:
+                        start = parser.parse(prog["start_time"])
+                        stop  = parser.parse(prog["stop_time"])
+                        if start <= now <= stop:
+                            # add programme title & time window to the row text
+                            start_s = start.astimezone(tz.tzlocal()).strftime("%I:%M %p")
+                            stop_s  = stop.astimezone(tz.tzlocal()).strftime("%I:%M %p")
+                            display_text += f" – {prog['title']} ({start_s}-{stop_s})"
+                            tooltip_text   = prog["description"]          # may be “”
+                            break
 
-                        if current_epg:
-                            start_time = parser.parse(current_epg['start_time']).astimezone(tz.tzlocal())
-                            stop_time = parser.parse(current_epg['stop_time']).astimezone(tz.tzlocal())
-                            start_time_formatted = start_time.strftime("%I:%M %p")
-                            stop_time_formatted = stop_time.strftime("%I:%M %p")
-                            title = current_epg['title']
-                            display_text += f" - {title} ({start_time_formatted} - {stop_time_formatted})"
-                            tooltip_text = current_epg['description']
-                        else:
-                            display_text += " - No Current EPG Data Available"
-                            tooltip_text = "No current EPG information found."
-                    else:
-                        display_text += " - No EPG Data"
-                        tooltip_text = "No EPG information found."
+                # ─── Movies / Series placeholder (“Loading preview…”) ───────────
+                elif tab_name in ("Movies", "Series"):
+                    tooltip_text = "Loading preview…"
 
-                item = QListWidgetItem(display_text)
-                item.setData(Qt.UserRole, entry)
-                item.setIcon(channel_icon)
+                # build list row --------------------------------------------------
+                itm = QListWidgetItem(display_text)
+                itm.setData(Qt.UserRole, entry)
+                itm.setIcon(row_icon)
 
-                if tooltip_text:
-                    description_html = html.escape(tooltip_text)
-                    tooltip_text_formatted = f"""
-                    <div style="max-width: 300px; white-space: normal;">
-                        {description_html}
-                    </div>
-                    """
-                    item.setToolTip(tooltip_text_formatted)
+                # LIVE: show nothing until EPG is ready
+                if tab_name == "LIVE" and not self.epg_data:
+                    itm.setToolTip("")          # absolutely no hover text
+                else:
+                    itm.setToolTip(tooltip_text)
 
-                items.append(item)
+                items.append(itm)
 
+            # alphabetical order
             items.sort(key=lambda x: x.text())
-            for item in items:
-                list_widget.addItem(item)
+            for itm in items:
+                list_widget.addItem(itm)
 
             list_widget.verticalScrollBar().setValue(0)
-        except Exception as e:
-            print(f"Error displaying channels: {e}")
+        except Exception as err:
+            print("Error displaying channels:", err)
+
+
+
+
 
     def fetch_series_in_category(self, category_name):
         try:
             list_widget = self.get_list_widget('Series')
-            current_scroll_position = list_widget.verticalScrollBar().value()
-            stack = self.navigation_stacks['Series']
-            if stack:
-                stack[-1]['scroll_position'] = current_scroll_position
+            curr_scroll = list_widget.verticalScrollBar().value()
+            if self.navigation_stacks['Series']:
+                self.navigation_stacks['Series'][-1]['scroll_position'] = curr_scroll
             else:
-                self.top_level_scroll_positions['Series'] = current_scroll_position
+                self.top_level_scroll_positions['Series'] = curr_scroll
 
-            category_id = next(g["category_id"] for g in self.groups["Series"] if g["category_name"] == category_name)
+            category_id = next(g["category_id"]
+                               for g in self.groups["Series"]
+                               if g["category_name"] == category_name)
 
-            http_method = self.get_http_method()
             params = {
-                'username': self.username,
-                'password': self.password,
-                'action': 'get_series',
-                'category_id': category_id
+                "username": self.username,
+                "password": self.password,
+                "action":   "get_series",
+                "category_id": category_id
             }
+            resp = self.make_request(self.get_http_method(),
+                                     f"{self.server}/player_api.php",
+                                     params)
+            resp.raise_for_status()
+            series_list = resp.json()
 
-            streams_url = f"{self.server}/player_api.php"
-            response = self.make_request(http_method, streams_url, params)
-            response.raise_for_status()
+            # 🔑  store for quick lookup (poster / plot / tmdb_id, …)
+            self.series_lookup = {s["series_id"]: s for s in series_list}
 
-            series_list = response.json()
-
-            self.navigation_stacks['Series'].append({'level': 'series_categories', 'data': {'series_list': series_list}, 'scroll_position': 0})
+            self.navigation_stacks['Series'].append({
+                "level": "series_categories",
+                "data": {"series_list": series_list},
+                "scroll_position": 0
+            })
             self.show_series_in_category(series_list)
 
         except Exception as e:
-            print(f"Error fetching series: {e}")
+            print("Error fetching series:", e)
+
 
     def show_series_in_category(self, series_list, restore_scroll_position=False, scroll_position=0):
         try:
@@ -1288,67 +1719,73 @@ class IPTVPlayerApp(QMainWindow):
 
     def show_episodes(self, episodes, restore_scroll_position=False, scroll_position=0):
         try:
-            list_widget = self.channel_list_series
-            list_widget.clear()
-            if self.navigation_stacks['Series']:
-                go_back_item = QListWidgetItem("Go Back")
-                go_back_item.setIcon(self.go_back_icon)
-                list_widget.addItem(go_back_item)
+            lw = self.channel_list_series
+            lw.clear()
 
-            episodes_sorted = sorted(episodes, key=lambda x: int(x.get('episode_num', 0)))
-            stack = self.navigation_stacks['Series']
-            if stack and len(stack) >= 2 and 'series_entry' in stack[-2]['data']:
-                series_title = stack[-2]['data']['series_entry'].get('name', '').strip()
-            else:
-                series_title = "Unknown Series"
+            # ---- “Go Back” -----------------------------------------------------
+            if self.navigation_stacks["Series"]:
+                gb = QListWidgetItem("Go Back")
+                gb.setIcon(self.go_back_icon)
+                lw.addItem(gb)
+
+            # ---- context -------------------------------------------------------
+            series_entry   = self.navigation_stacks["Series"][-2]["data"]["series_entry"]
+            series_title   = series_entry.get("name", "").strip()
+            series_poster  = series_entry.get("cover") or series_entry.get("stream_icon") or ""
+            series_tmdb_id = series_entry.get("tmdb_id")
 
             items = []
-            for episode in episodes_sorted:
-                raw_episode_title = str(episode.get('title', 'Untitled Episode')).strip()
-                season = str(episode.get('season', '1'))
-                episode_num = str(episode.get('episode_num', '1'))
+            for ep in sorted(episodes, key=lambda x: int(x.get("episode_num", 0))):
+                
 
-                try:
-                    season_int = int(season)
-                    episode_num_int = int(episode_num)
-                    episode_code = f"S{season_int:02d}E{episode_num_int:02d}"
-                except ValueError:
-                    episode_code = f"S{season}E{episode_num}"
+                # === Attach full info dict from API directly! ===
+                ep_entry = dict(ep)  # start with a copy of the whole episode
+                ep_info = ep.get("info", {})
+                ep_entry["info"] = ep_info  # keep the full info dict
 
-                if series_title.lower() in raw_episode_title.lower():
-                    episode_title = re.sub(re.escape(series_title), '', raw_episode_title, flags=re.IGNORECASE).strip(" -")
-                else:
-                    episode_title = raw_episode_title
+                # Compose display name as before
+                season_no   = int(ep.get("season", 1))
+                episode_no  = int(ep.get("episode_num", 1))
+                code        = f"S{season_no:02d}E{episode_no:02d}"
+                raw_title   = ep.get("title", "Untitled Episode").strip()
+                clean_title = re.sub(re.escape(series_title), "", raw_title, flags=re.I).strip(" -")
+                display_txt = f"{series_title} - {code} - {clean_title}"
 
-                if episode_code.lower() in episode_title.lower():
-                    episode_title = re.sub(re.escape(episode_code), '', episode_title, flags=re.IGNORECASE).strip(" -")
+                ep_entry["name"] = display_txt
+                ep_entry["title"] = raw_title
+                ep_entry["url"] = (
+                    f"{self.server}/series/{self.username}/{self.password}/"
+                    f"{ep['id']}.{ep.get('container_extension', 'm3u8')}"
+                )
+                ep_entry["plot"] = ep_info.get("plot", "")
+                ep_entry["stream_icon"] = ep_info.get("movie_image", series_poster)
+                ep_entry["tmdb_id"] = series_tmdb_id
 
-                display_text = f"{series_title} - {episode_code} - {episode_title}"
+                itm = QListWidgetItem(display_txt)
+                itm.setData(Qt.UserRole, ep_entry)
+                itm.setIcon(self.series_channel_icon)
+                items.append(itm)
 
-                episode_entry = {
-                    "season": season,
-                    "episode_num": episode_num,
-                    "name": display_text,
-                    "url": f"{self.server}/series/{self.username}/{self.password}/{episode['id']}.{episode.get('container_extension', 'm3u8')}",
-                    "title": episode_title
-                }
+            for itm in items:
+                lw.addItem(itm)
 
-                item = QListWidgetItem(display_text)
-                item.setData(Qt.UserRole, episode_entry)
-                item.setIcon(self.series_channel_icon)
-                items.append(item)
-
-            for item in items:
-                list_widget.addItem(item)
-
+            # scroll restore
             if restore_scroll_position:
-                QTimer.singleShot(0, lambda: list_widget.verticalScrollBar().setValue(scroll_position))
+                QTimer.singleShot(0, lambda:
+                    lw.verticalScrollBar().setValue(scroll_position))
             else:
-                list_widget.verticalScrollBar().setValue(0)
+                lw.verticalScrollBar().setValue(0)
 
-            self.current_episodes = episodes_sorted
-        except Exception as e:
-            print(f"Error displaying episodes: {e}")
+            self.current_episodes = episodes
+
+        except Exception as err:
+            print("Error displaying episodes:", err)
+
+
+
+
+
+
 
     def play_channel(self, entry):
         try:
@@ -1358,7 +1795,7 @@ class IPTVPlayerApp(QMainWindow):
                 return
 
             if self.external_player_command:
-                user_agent_argument = f":http-user-agent=Lavf53.32.100"
+                user_agent_argument = f":http-user-agent=AppleCoreMedia/1.0.0.20L563 (Apple TV; U; CPU OS 16_5 like Mac OS X; en_us)"
                 command = [self.external_player_command, stream_url, user_agent_argument]
 
                 if is_linux:
