@@ -1,0 +1,8 @@
+
+
+
+chmod +x install.sh
+bash install.sh --run --desktop
+
+
+That will set up XTREME IPTV PLAYER by MY-1 on Linux, and optionally create a launcher in your app menu. ￼
