@@ -5,6 +5,8 @@
 Enhanced platform compatibility for Windows 10, Windows 11, macOS Sequoia, and Linux. 
 This IPTV player, built with Python and PyQt5, supports M3U_plus playlists and Xtream Codes API, allowing users to manage and play IPTV channels, movies, and series.
 
+Donations Appreciated: https://ko-fi.com/maiwand
+
 **Features:**
 - **M3U_plus Support:** Load and play live TV, movies, and series.
 - **EPG Option:** Access and download Electronic Program Guide for live TV channels.
