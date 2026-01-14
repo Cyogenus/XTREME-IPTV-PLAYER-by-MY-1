@@ -19,4 +19,4 @@ Donations Appreciated: https://ko-fi.com/maiwand
 - **Recommended Player:** For optimal performance, use VLC media player. Download it at: https://www.videolan.org/vlc/
 - **Recommended Player:** For optimal performance, use SMPlayer player. Download it at: https://www.smplayer.info
 
-![image](https://github.com/user-attachments/assets/7b203a12-38dd-4a81-b131-47266a63c1e6)
+<img width="752" height="555" alt="image" src="https://github.com/user-attachments/assets/3491cf63-497e-4aae-8a72-da63b69b480d" />
