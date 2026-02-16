@@ -1,0 +1,107 @@
+/* Global Styling */
+* {
+    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+QMainWindow {
+    background: #0f172a;
+}
+
+/* Dashboard Tiles */
+#TileButton {
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#TileButton:hover {
+    border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+QLabel {
+    color: white;
+}
+
+QLineEdit {
+    background-color: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 12px;
+    padding: 12px;
+    color: #f1f5f9;
+    font-size: 15px;
+}
+
+QLineEdit:focus {
+    border: 2px solid #3b82f6;
+    background-color: #0f172a;
+}
+
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563eb, stop:1 #3b82f6);
+    color: white;
+    border-radius: 10px;
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4ed8, stop:1 #2563eb);
+}
+
+QPushButton#BackButton {
+    background-color: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+QPushButton#BackButton:hover {
+    background-color: rgba(255,255,255,0.15);
+}
+
+QComboBox {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 10px;
+    color: white;
+}
+
+QListWidget {
+    background-color: transparent;
+    outline: none;
+    border: none;
+}
+
+QListWidget::item {
+    background-color: rgba(30, 41, 59, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    margin-bottom: 8px;
+    padding: 15px;
+}
+
+QListWidget::item:hover {
+    background-color: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+QListWidget::item:selected {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(59, 130, 246, 0.2), stop:1 rgba(37, 99, 235, 0.2));
+    border: 1px solid #3b82f6;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 0.1);
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
