@@ -32,8 +32,7 @@ It supports:
 ## Learn More
 
 BLAZIN IPTV Player GitHub:
-[https://github.com/YOUR-USERNAME/YOUR-BLAZIN-REPO](https://github.com/Cyogenus/Blazin-IPTV-Player)
-
+https://github.com/Cyogenus/Blazin-IPTV-Player
 Reddit Community:
 https://www.reddit.com/r/BlazinIPTVPlayer/
 
