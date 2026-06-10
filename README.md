@@ -49,8 +49,7 @@ For my newer Windows IPTV player, use **BLAZIN IPTV Player** from the Microsoft 
 
 
 ![GitHub all releases](https://img.shields.io/github/downloads/Cyogenus/XTREME-IPTV-PLAYER-by-MY-1/total?color=blue&label=Downloads&logo=github)
-![GitHub release (latest by date)](https://img.shields.io/github/downloads/Cyogenus/XTREME-IPTV-PLAYER-by-MY-1/latest/total?color=purple&label=Latest%20Release%20Downloads&logo=github)
-
+[![Latest Release Downloads](https://img.shields.io/github/downloads/Cyogenus/XTREME-IPTV-PLAYER-by-MY-1/latest/total?color=purple&label=Latest%20Release%20Downloads&logo=github&cacheSeconds=3600)](https://github.com/Cyogenus/XTREME-IPTV-PLAYER-by-MY-1/releases/latest)
 **XTREME IPTV PLAYER by My-1**
 Enhanced platform compatibility for Windows 10, Windows 11, macOS Sequoia, and Linux. 
 This IPTV player, built with Python and PyQt5, supports M3U_plus playlists and Xtream Codes API, allowing users to manage and play IPTV channels, movies, and series.
