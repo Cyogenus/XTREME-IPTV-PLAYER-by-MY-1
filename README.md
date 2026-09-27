@@ -1,8 +1,8 @@
 # Looking for an Updated Xtream Codes IPTV Player for Windows?
 
-**BLAZIN IPTV Player** is my newer Windows IPTV player for users who want a faster, cleaner, and more complete replacement for this earlier Xtream/M3U project.
+**BLAZIN IPTV Player** is now an **all-in-one Windows IPTV player** that brings the major IPTV login types together in one app.
 
-It supports **Xtream Codes login** with Live TV, Movies, TV Series, EPG, search, favorites, artwork, TV Mode, and built-in playback when the source provides the required data.
+It supports **Xtream Codes**, **Stalker Portal**, **MAG / STB MAC**, and **M3U** sources, so users no longer need a separate player for each login type. BLAZIN can organize Live TV, Movies, TV Series, EPG, search, favorites, artwork, TV Mode, and built-in playback when the source provides the required data.
 
 ## Try BLAZIN IPTV Player
 
@@ -16,7 +16,7 @@ It supports **Xtream Codes login** with Live TV, Movies, TV Series, EPG, search,
 
 <img width="2545" height="1329" alt="BLAZIN IPTV Player for Windows" src="https://github.com/user-attachments/assets/9201c9d1-13b6-4939-8cf6-7b03c96ae9f4" />
 
-## Why Xtream Users May Want BLAZIN
+## One Player for Xtream, Stalker, MAG / STB MAC, and M3U
 
 * **Xtream Codes login** for compatible user-provided accounts
 * **Live TV, Movies, and TV Series** sections when supported by the source
