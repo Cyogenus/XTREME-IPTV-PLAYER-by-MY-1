@@ -30,7 +30,7 @@ It supports **Xtream Codes**, **Stalker Portal**, **MAG / STB MAC**, and **M3U**
 ## Learn More
 
 * Website: [windowsiptv.com](https://windowsiptv.com)
-* BLAZIN IPTV Player GitHub: [Cyogenus/Blazin-IPTV-Player](https://github.com/Cyogenus/Blazin-IPTV-Player)
+* BLAZIN IPTV Player GitHub: [Cyogenus/Blazin-IPTV-Player-Windows](https://github.com/Cyogenus/Blazin-IPTV-Player-Windows)
 * Reddit Community: [r/BlazinIPTVPlayer](https://www.reddit.com/r/BlazinIPTVPlayer/)
 
 > **Important:** BLAZIN IPTV Player is a media player only. It does **not** provide channels, playlists, subscriptions, streams, IPTV services, provider accounts, or copyrighted content. Users must provide their own legal IPTV source.
